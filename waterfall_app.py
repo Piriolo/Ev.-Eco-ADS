@@ -46,59 +46,77 @@ uploaded_file = st.file_uploader(
 def load_excel_data(uploaded_file_bytes):
     try:
         if uploaded_file_bytes is not None:
-            # Cargar el archivo Excel desde los bytes
-            workbook = openpyxl.load_workbook(BytesIO(uploaded_file_bytes), data_only=True)
+            # Leer con pandas (más robusto que openpyxl)
+            df = pd.read_excel(
+                BytesIO(uploaded_file_bytes), 
+                engine='openpyxl',
+                header=None,  # Sin encabezados automáticos
+                na_values=['', ' ', 'NaN', 'NULL']  # Valores a tratar como NaN
+            )
             
-            # Seleccionar la hoja (primera hoja por defecto)
-            sheet = workbook.active
-            
-            # Leer categorías (B145:B163)
+            # Leer categorías (columna B, filas 144-162, índices 143-161 en pandas)
             categories = []
-            for row in range(145, 164):
-                cell_value = sheet[f'B{row}'].value
-                if cell_value is not None and str(cell_value).strip() != "":
-                    categories.append(str(cell_value).strip())
+            for i in range(144, 163):  # B145:B163
+                if i < len(df) and 1 < len(df.columns):  # Columna B = índice 1
+                    val = df.iloc[i, 1]  # fila i, columna B (1)
+                    if pd.notna(val) and str(val).strip():
+                        categories.append(str(val).strip())
             
-            # Leer años (D144:AK144)
+            # Leer años (fila 143, columnas D:AK, índices 3:36)
             years = []
-            for col in range(4, 37):  # D=4, AK=37
-                cell_value = sheet.cell(row=144, column=col).value
-                if cell_value is not None and str(cell_value).strip() != "":
-                    try:
-                        years.append(int(float(cell_value)))
-                    except:
-                        pass
+            if 143 < len(df):  # Fila 144 = índice 143
+                for col in range(3, 37):  # D=3, AK=36
+                    if col < len(df.columns):
+                        val = df.iloc[143, col]
+                        if pd.notna(val):
+                            try:
+                                years.append(int(float(val)))
+                            except (ValueError, TypeError):
+                                continue
             
-            # Leer datos (D145:AK163)
+            # Leer matriz de datos (D145:AK163)
             data_matrix = []
-            for row in range(145, 164):
-                row_data = []
-                for col in range(4, 37):
-                    cell_value = sheet.cell(row=row, column=col).value
-                    try:
-                        row_data.append(float(cell_value) if cell_value is not None else 0.0)
-                    except:
-                        row_data.append(0.0)
-                data_matrix.append(row_data)
+            for row in range(144, 163):  # Filas 145-163 = índices 144-162
+                if row < len(df):
+                    row_data = []
+                    for col in range(3, 37):  # Columnas D-AK = índices 3-36
+                        if col < len(df.columns):
+                            val = df.iloc[row, col]
+                            try:
+                                row_data.append(float(val) if pd.notna(val) else 0.0)
+                            except (ValueError, TypeError):
+                                row_data.append(0.0)
+                        else:
+                            row_data.append(0.0)
+                    data_matrix.append(row_data)
             
             # Leer totales
-            manned_total = sheet['C169'].value
-            ads_total = sheet['C172'].value
+            manned_total = 0.0
+            ads_total = 0.0
             
-            try:
-                manned_total = float(manned_total) if manned_total is not None else 0.0
-                ads_total = float(ads_total) if ads_total is not None else 0.0
-            except:
-                manned_total = 0.0
-                ads_total = 0.0
+            if 168 < len(df) and 2 < len(df.columns):  # C169 = fila 168, col 2
+                val = df.iloc[168, 2]
+                try:
+                    manned_total = float(val) if pd.notna(val) else 0.0
+                except (ValueError, TypeError):
+                    manned_total = 0.0
             
-            # Verificar que tenemos datos válidos
+            if 171 < len(df) and 2 < len(df.columns):  # C172 = fila 171, col 2
+                val = df.iloc[171, 2]
+                try:
+                    ads_total = float(val) if pd.notna(val) else 0.0
+                except (ValueError, TypeError):
+                    ads_total = 0.0
+            
+            # Validar datos
             if len(categories) > 0 and len(years) > 0 and len(data_matrix) > 0:
                 st.success(f"✅ Datos cargados del Excel: {len(categories)} categorías, {len(years)} años")
+                st.info(f"📊 Totales: MANNED=${manned_total:,.0f}, ADS=${ads_total:,.0f}")
                 return categories, years, np.array(data_matrix), manned_total, ads_total
             else:
                 st.warning("⚠️ No se encontraron datos válidos en las celdas especificadas")
-            
+                st.info(f"Debug: {len(categories)} categorías, {len(years)} años, {len(data_matrix)} filas de datos")
+                
     except Exception as e:
         st.error(f"❌ Error al cargar el archivo Excel: {str(e)}")
         st.info("Usando datos de ejemplo mientras tanto...")
