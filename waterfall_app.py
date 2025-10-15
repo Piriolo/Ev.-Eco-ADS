@@ -28,38 +28,46 @@ discount_rate = st.sidebar.slider(
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Instrucciones:**")
-st.sidebar.markdown("1. Ajusta la tasa de descuento")
-st.sidebar.markdown("2. El gráfico se actualiza automáticamente")
-st.sidebar.markdown("3. Hover sobre las barras para más detalles")
+st.sidebar.markdown("1. Carga tu archivo Excel")
+st.sidebar.markdown("2. Ajusta la tasa de descuento")
+st.sidebar.markdown("3. El gráfico se actualiza automáticamente")
+st.sidebar.markdown("4. Hover sobre las barras para más detalles")
+
+# Upload de archivo Excel
+st.markdown("### 📁 Cargar Archivo Excel")
+uploaded_file = st.file_uploader(
+    "Selecciona el archivo 'Ev. Eco ADS.xlsx'",
+    type=['xlsx'],
+    help="Carga tu archivo Excel para usar datos reales en lugar de los datos de ejemplo"
+)
 
 # Función para cargar datos del Excel
 @st.cache_data
-def load_excel_data():
+def load_excel_data(uploaded_file_bytes):
     try:
-        # Intentar cargar el archivo Excel desde el repositorio
-        file_path = "Ev. Eco ADS.xlsx"
-        
-        # Si existe el archivo, leerlo
-        if st.session_state.get('excel_file') is not None:
-            workbook = openpyxl.load_workbook(st.session_state.excel_file)
-            sheet_names = workbook.sheetnames
+        if uploaded_file_bytes is not None:
+            # Cargar el archivo Excel desde los bytes
+            workbook = openpyxl.load_workbook(BytesIO(uploaded_file_bytes), data_only=True)
             
-            # Buscar la hoja correcta (primera hoja por defecto)
+            # Seleccionar la hoja (primera hoja por defecto)
             sheet = workbook.active
             
             # Leer categorías (B145:B163)
             categories = []
             for row in range(145, 164):
                 cell_value = sheet[f'B{row}'].value
-                if cell_value:
-                    categories.append(str(cell_value))
+                if cell_value is not None and str(cell_value).strip() != "":
+                    categories.append(str(cell_value).strip())
             
             # Leer años (D144:AK144)
             years = []
             for col in range(4, 37):  # D=4, AK=37
                 cell_value = sheet.cell(row=144, column=col).value
-                if cell_value:
-                    years.append(int(cell_value))
+                if cell_value is not None and str(cell_value).strip() != "":
+                    try:
+                        years.append(int(float(cell_value)))
+                    except:
+                        pass
             
             # Leer datos (D145:AK163)
             data_matrix = []
@@ -67,19 +75,36 @@ def load_excel_data():
                 row_data = []
                 for col in range(4, 37):
                     cell_value = sheet.cell(row=row, column=col).value
-                    row_data.append(float(cell_value) if cell_value else 0.0)
+                    try:
+                        row_data.append(float(cell_value) if cell_value is not None else 0.0)
+                    except:
+                        row_data.append(0.0)
                 data_matrix.append(row_data)
             
             # Leer totales
-            manned_total = sheet['C169'].value or 0
-            ads_total = sheet['C172'].value or 0
+            manned_total = sheet['C169'].value
+            ads_total = sheet['C172'].value
             
-            return categories, years, np.array(data_matrix), manned_total, ads_total
+            try:
+                manned_total = float(manned_total) if manned_total is not None else 0.0
+                ads_total = float(ads_total) if ads_total is not None else 0.0
+            except:
+                manned_total = 0.0
+                ads_total = 0.0
+            
+            # Verificar que tenemos datos válidos
+            if len(categories) > 0 and len(years) > 0 and len(data_matrix) > 0:
+                st.success(f"✅ Datos cargados del Excel: {len(categories)} categorías, {len(years)} años")
+                return categories, years, np.array(data_matrix), manned_total, ads_total
+            else:
+                st.warning("⚠️ No se encontraron datos válidos en las celdas especificadas")
             
     except Exception as e:
-        st.warning(f"No se pudo cargar el archivo Excel: {e}")
-        
+        st.error(f"❌ Error al cargar el archivo Excel: {str(e)}")
+        st.info("Usando datos de ejemplo mientras tanto...")
+    
     # Datos de ejemplo si no se puede cargar el archivo
+    st.info("📝 Usando datos de ejemplo. Carga tu archivo Excel para ver datos reales.")
     categories = [
         'Operación', 'Mantenimiento', 'Combustible', 'Neumáticos', 'Personal',
         'Seguros', 'Depreciación', 'Costos Indirectos', 'Productividad',
@@ -91,10 +116,22 @@ def load_excel_data():
     np.random.seed(42)
     data_matrix = np.random.uniform(-500000, 500000, (len(categories), len(years)))
     
-    manned_total = 10000000
-    ads_total = 8500000
+    manned_total = 10000000.0
+    ads_total = 8500000.0
     
     return categories, years, data_matrix, manned_total, ads_total
+
+# Preparar datos para cargar
+uploaded_bytes = None
+if uploaded_file is not None:
+    uploaded_bytes = uploaded_file.read()
+    # Limpiar cache cuando se carga un nuevo archivo
+    if 'last_file_name' not in st.session_state or st.session_state.last_file_name != uploaded_file.name:
+        st.cache_data.clear()
+        st.session_state.last_file_name = uploaded_file.name
+
+# Cargar datos
+categories, years, data_matrix, manned_total, ads_total = load_excel_data(uploaded_bytes)
 
 # Función para calcular VPN
 def calculate_npv(cash_flows, discount_rate):
@@ -110,9 +147,12 @@ def create_waterfall_chart(categories, data, manned_total, ads_total, discount_r
     discounted_values = []
     
     for i, category in enumerate(categories):
-        cash_flows = data[i]
-        npv = calculate_npv(cash_flows, discount_rate)
-        discounted_values.append(npv)
+        if i < len(data):
+            cash_flows = data[i]
+            npv = calculate_npv(cash_flows, discount_rate)
+            discounted_values.append(npv)
+        else:
+            discounted_values.append(0)
     
     # Preparar datos para el waterfall
     x_labels = ['MANNED (Base)'] + categories + ['ADS (Final)']
@@ -125,19 +165,23 @@ def create_waterfall_chart(categories, data, manned_total, ads_total, discount_r
         values.append(val)
         cumulative += val
     
-    values.append(ads_total - cumulative)  # Ajuste final
+    # Ajuste final para llegar al total ADS
+    final_adjustment = ads_total - cumulative
+    values.append(final_adjustment)
     
     # Crear el gráfico waterfall
     fig = go.Figure()
     
-    # Barra inicial (MANNED)
+    # Preparar medidas para el waterfall
+    measures = ["absolute"] + ["relative"] * len(categories) + ["total"]
+    
     fig.add_trace(go.Waterfall(
         name="Análisis Waterfall",
         orientation="v",
-        measure=["absolute"] + ["relative"] * len(categories) + ["total"],
+        measure=measures,
         x=x_labels,
         textposition="outside",
-        text=[f"${val/1000000:.1f}M" for val in values],
+        text=[f"${val/1000000:.1f}M" if abs(val) >= 1000000 else f"${val/1000:.0f}K" for val in values],
         y=values,
         connector={"line": {"color": "rgb(63, 63, 63)"}},
         increasing={"marker": {"color": "#2E8B57"}},
@@ -168,32 +212,31 @@ def create_waterfall_chart(categories, data, manned_total, ads_total, discount_r
     
     return fig
 
-# Cargar datos
-categories, years, data_matrix, manned_total, ads_total = load_excel_data()
-
 # Mostrar información de los datos
+st.markdown("---")
 col1, col2, col3 = st.columns(3)
 
 with col1:
     st.metric(
         label="Total MANNED",
-        value=f"${manned_total/1000000:.1f}M",
+        value=f"${manned_total/1000000:.1f}M" if abs(manned_total) >= 1000000 else f"${manned_total/1000:.0f}K",
         help="Valor base del caso MANNED"
     )
 
 with col2:
     st.metric(
         label="Total ADS",
-        value=f"${ads_total/1000000:.1f}M",
+        value=f"${ads_total/1000000:.1f}M" if abs(ads_total) >= 1000000 else f"${ads_total/1000:.0f}K",
         help="Valor objetivo del caso ADS"
     )
 
 with col3:
     difference = ads_total - manned_total
+    delta_pct = (difference/manned_total)*100 if manned_total != 0 else 0
     st.metric(
         label="Diferencia",
-        value=f"${difference/1000000:.1f}M",
-        delta=f"{(difference/manned_total)*100:.1f}%",
+        value=f"${difference/1000000:.1f}M" if abs(difference) >= 1000000 else f"${difference/1000:.0f}K",
+        delta=f"{delta_pct:.1f}%",
         help="Diferencia entre ADS y MANNED"
     )
 
@@ -208,32 +251,39 @@ st.markdown("### 📋 Detalles por Categoría")
 # Calcular VPN por categoría
 details_data = []
 for i, category in enumerate(categories):
-    cash_flows = data_matrix[i]
-    npv = calculate_npv(cash_flows, discount_rate)
-    
-    details_data.append({
-        'Categoría': category,
-        'VPN (USD)': f"${npv:,.0f}",
-        'VPN (M USD)': f"${npv/1000000:.2f}M",
-        'Impacto (%)': f"{(npv/manned_total)*100:.2f}%"
-    })
+    if i < len(data_matrix):
+        cash_flows = data_matrix[i]
+        npv = calculate_npv(cash_flows, discount_rate)
+        
+        impact_pct = (npv/manned_total)*100 if manned_total != 0 else 0
+        
+        details_data.append({
+            'Categoría': category,
+            'VPN (USD)': f"${npv:,.0f}",
+            'VPN (M USD)': f"${npv/1000000:.2f}M" if abs(npv) >= 1000000 else f"${npv/1000:.0f}K",
+            'Impacto (%)': f"{impact_pct:.2f}%"
+        })
 
-df_details = pd.DataFrame(details_data)
-st.dataframe(df_details, use_container_width=True)
+if details_data:
+    df_details = pd.DataFrame(details_data)
+    st.dataframe(df_details, use_container_width=True)
+else:
+    st.warning("No hay datos para mostrar en la tabla de detalles")
 
-# Upload de archivo Excel
+# Información adicional
 st.markdown("---")
-st.markdown("### 📁 Cargar Archivo Excel")
-uploaded_file = st.file_uploader(
-    "Selecciona el archivo 'Ev. Eco ADS.xlsx'",
-    type=['xlsx'],
-    help="Carga tu archivo Excel para usar datos reales en lugar de los datos de ejemplo"
-)
+st.markdown("### 📊 Información del Dataset")
+col1, col2 = st.columns(2)
 
-if uploaded_file is not None:
-    st.session_state.excel_file = uploaded_file
-    st.success("¡Archivo cargado exitosamente! Recarga la página para ver los datos actualizados.")
+with col1:
+    st.info(f"**Categorías:** {len(categories)}")
+    st.info(f"**Período de análisis:** {len(years)} años")
     
+with col2:
+    if len(years) > 0:
+        st.info(f"**Años:** {min(years)} - {max(years)}")
+    st.info(f"**Tasa de descuento actual:** {discount_rate}%")
+
 # Footer
 st.markdown("---")
 st.markdown("*Desarrollado para análisis económico MANNED vs ADS con tasa de descuento variable*")
