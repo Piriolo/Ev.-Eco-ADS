@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import openpyxl
 from io import BytesIO
+import re
 
 # Configuración de la página
 st.set_page_config(
@@ -41,6 +42,27 @@ uploaded_file = st.file_uploader(
     help="Carga tu archivo Excel para usar datos reales en lugar de los datos de ejemplo"
 )
 
+# Utilidad para parsear etiquetas de año tipo "Y01", "Año 02", "Y1", etc.
+def parse_year_label(val, base_label_prefix="Y"):
+    """Devuelve una etiqueta estandarizada de año.
+    Acepta valores numéricos (e.g., 2025) o cadenas tipo 'Y01', 'Y1', 'Year 02'.
+    Para strings, extrae el número y lo formatea como Y01, Y02, ...
+    """
+    if pd.isna(val):
+        return None
+    # Si es número real (año calendario), lo devolvemos como int
+    if isinstance(val, (int, float)) and not np.isnan(val):
+        return int(val)
+    # Si es string, extraer dígitos
+    s = str(val).strip()
+    m = re.search(r"(\d+)", s)
+    if m:
+        n = int(m.group(1))
+        # Normalizar a Y01, Y02, ... (hasta Y99). Si prefieres sin cero a la izquierda usa f"Y{n}"
+        return f"{base_label_prefix}{n:02d}"
+    # Si no hay dígitos, devolver tal cual por transparencia
+    return s
+
 # Función para cargar datos del Excel
 @st.cache_data
 def load_excel_data(uploaded_file_bytes):
@@ -50,36 +72,36 @@ def load_excel_data(uploaded_file_bytes):
             df = pd.read_excel(
                 BytesIO(uploaded_file_bytes), 
                 engine='openpyxl',
-                header=None,  # Sin encabezados automáticos
-                na_values=['', ' ', 'NaN', 'NULL']  # Valores a tratar como NaN
+                header=None,
+                na_values=['', ' ', 'NaN', 'NULL']
             )
             
-            # Leer categorías (columna B, filas 144-162, índices 143-161 en pandas)
+            # Leer categorías (B145:B163)
             categories = []
-            for i in range(144, 163):  # B145:B163
-                if i < len(df) and 1 < len(df.columns):  # Columna B = índice 1
-                    val = df.iloc[i, 1]  # fila i, columna B (1)
+            for i in range(144, 163):  # índices 144-162
+                if i < len(df) and 1 < len(df.columns):  # col B = 1
+                    val = df.iloc[i, 1]
                     if pd.notna(val) and str(val).strip():
                         categories.append(str(val).strip())
             
-            # Leer años (fila 143, columnas D:AK, índices 3:36)
+            # Leer años (D144:AK144) y soportar etiquetas tipo Y01
             years = []
-            if 143 < len(df):  # Fila 144 = índice 143
+            raw_years = []
+            if 143 < len(df):
                 for col in range(3, 37):  # D=3, AK=36
                     if col < len(df.columns):
                         val = df.iloc[143, col]
-                        if pd.notna(val):
-                            try:
-                                years.append(int(float(val)))
-                            except (ValueError, TypeError):
-                                continue
+                        parsed = parse_year_label(val)
+                        if parsed is not None and str(parsed).strip():
+                            years.append(parsed)
+                            raw_years.append(val)
             
             # Leer matriz de datos (D145:AK163)
             data_matrix = []
-            for row in range(144, 163):  # Filas 145-163 = índices 144-162
+            for row in range(144, 163):
                 if row < len(df):
                     row_data = []
-                    for col in range(3, 37):  # Columnas D-AK = índices 3-36
+                    for col in range(3, 37):
                         if col < len(df.columns):
                             val = df.iloc[row, col]
                             try:
@@ -93,29 +115,27 @@ def load_excel_data(uploaded_file_bytes):
             # Leer totales
             manned_total = 0.0
             ads_total = 0.0
-            
-            if 168 < len(df) and 2 < len(df.columns):  # C169 = fila 168, col 2
-                val = df.iloc[168, 2]
+            if 168 < len(df) and 2 < len(df.columns):
                 try:
-                    manned_total = float(val) if pd.notna(val) else 0.0
+                    manned_total = float(df.iloc[168, 2]) if pd.notna(df.iloc[168, 2]) else 0.0
                 except (ValueError, TypeError):
                     manned_total = 0.0
-            
-            if 171 < len(df) and 2 < len(df.columns):  # C172 = fila 171, col 2
-                val = df.iloc[171, 2]
+            if 171 < len(df) and 2 < len(df.columns):
                 try:
-                    ads_total = float(val) if pd.notna(val) else 0.0
+                    ads_total = float(df.iloc[171, 2]) if pd.notna(df.iloc[171, 2]) else 0.0
                 except (ValueError, TypeError):
                     ads_total = 0.0
             
             # Validar datos
             if len(categories) > 0 and len(years) > 0 and len(data_matrix) > 0:
-                st.success(f"✅ Datos cargados del Excel: {len(categories)} categorías, {len(years)} años")
+                st.success(f"✅ Datos cargados del Excel: {len(categories)} categorías, {len(years)} períodos")
+                # Mostrar cómo quedaron las etiquetas de años
+                st.info(f"🕑 Etiquetas de período: {years[:5]}{' ...' if len(years) > 5 else ''}")
                 st.info(f"📊 Totales: MANNED=${manned_total:,.0f}, ADS=${ads_total:,.0f}")
                 return categories, years, np.array(data_matrix), manned_total, ads_total
             else:
                 st.warning("⚠️ No se encontraron datos válidos en las celdas especificadas")
-                st.info(f"Debug: {len(categories)} categorías, {len(years)} años, {len(data_matrix)} filas de datos")
+                st.info(f"Debug: {len(categories)} categorías, {len(years)} períodos, {len(data_matrix)} filas de datos")
                 
     except Exception as e:
         st.error(f"❌ Error al cargar el archivo Excel: {str(e)}")
@@ -129,14 +149,11 @@ def load_excel_data(uploaded_file_bytes):
         'Eficiencia', 'Disponibilidad', 'Utilización', 'Calidad', 'Seguridad',
         'Medio Ambiente', 'Capacitación', 'Repuestos', 'Servicios Externos', 'Otros'
     ]
-    
-    years = list(range(2025, 2045))
+    years = [f"Y{n:02d}" for n in range(1, 21)]  # Y01..Y20 como ejemplo
     np.random.seed(42)
     data_matrix = np.random.uniform(-500000, 500000, (len(categories), len(years)))
-    
     manned_total = 10000000.0
     ads_total = 8500000.0
-    
     return categories, years, data_matrix, manned_total, ads_total
 
 # Preparar datos para cargar
@@ -163,7 +180,6 @@ def calculate_npv(cash_flows, discount_rate):
 def create_waterfall_chart(categories, data, manned_total, ads_total, discount_rate):
     # Calcular flujos de caja descontados por categoría
     discounted_values = []
-    
     for i, category in enumerate(categories):
         if i < len(data):
             cash_flows = data[i]
@@ -178,7 +194,6 @@ def create_waterfall_chart(categories, data, manned_total, ads_total, discount_r
     # Calcular valores acumulativos
     values = [manned_total]
     cumulative = manned_total
-    
     for val in discounted_values:
         values.append(val)
         cumulative += val
@@ -189,10 +204,7 @@ def create_waterfall_chart(categories, data, manned_total, ads_total, discount_r
     
     # Crear el gráfico waterfall
     fig = go.Figure()
-    
-    # Preparar medidas para el waterfall
     measures = ["absolute"] + ["relative"] * len(categories) + ["total"]
-    
     fig.add_trace(go.Waterfall(
         name="Análisis Waterfall",
         orientation="v",
@@ -206,57 +218,29 @@ def create_waterfall_chart(categories, data, manned_total, ads_total, discount_r
         decreasing={"marker": {"color": "#DC143C"}},
         totals={"marker": {"color": "#4682B4"}}
     ))
-    
-    # Personalizar el layout
     fig.update_layout(
-        title={
-            'text': f"Análisis Waterfall: MANNED vs ADS (Tasa: {discount_rate}%)",
-            'x': 0.5,
-            'xanchor': 'center',
-            'font': {'size': 16}
-        },
+        title={'text': f"Análisis Waterfall: MANNED vs ADS (Tasa: {discount_rate}%)", 'x': 0.5, 'xanchor': 'center', 'font': {'size': 16}},
         xaxis_title="Categorías",
         yaxis_title="Valor Presente Neto (USD)",
         showlegend=False,
         height=600,
         hovermode='x unified'
     )
-    
-    # Rotar etiquetas del eje X
     fig.update_xaxes(tickangle=45)
-    
-    # Formatear eje Y
     fig.update_yaxes(tickformat="$,.0f")
-    
     return fig
 
 # Mostrar información de los datos
 st.markdown("---")
 col1, col2, col3 = st.columns(3)
-
 with col1:
-    st.metric(
-        label="Total MANNED",
-        value=f"${manned_total/1000000:.1f}M" if abs(manned_total) >= 1000000 else f"${manned_total/1000:.0f}K",
-        help="Valor base del caso MANNED"
-    )
-
+    st.metric(label="Total MANNED", value=f"${manned_total/1000000:.1f}M" if abs(manned_total) >= 1000000 else f"${manned_total/1000:.0f}K", help="Valor base del caso MANNED")
 with col2:
-    st.metric(
-        label="Total ADS",
-        value=f"${ads_total/1000000:.1f}M" if abs(ads_total) >= 1000000 else f"${ads_total/1000:.0f}K",
-        help="Valor objetivo del caso ADS"
-    )
-
+    st.metric(label="Total ADS", value=f"${ads_total/1000000:.1f}M" if abs(ads_total) >= 1000000 else f"${ads_total/1000:.0f}K", help="Valor objetivo del caso ADS")
 with col3:
     difference = ads_total - manned_total
     delta_pct = (difference/manned_total)*100 if manned_total != 0 else 0
-    st.metric(
-        label="Diferencia",
-        value=f"${difference/1000000:.1f}M" if abs(difference) >= 1000000 else f"${difference/1000:.0f}K",
-        delta=f"{delta_pct:.1f}%",
-        help="Diferencia entre ADS y MANNED"
-    )
+    st.metric(label="Diferencia", value=f"${difference/1000000:.1f}M" if abs(difference) >= 1000000 else f"${difference/1000:.0f}K", delta=f"{delta_pct:.1f}%", help="Diferencia entre ADS y MANNED")
 
 # Crear y mostrar el gráfico
 st.markdown("---")
@@ -266,21 +250,13 @@ st.plotly_chart(fig, use_container_width=True)
 # Tabla de detalles
 st.markdown("### 📋 Detalles por Categoría")
 
-# Calcular VPN por categoría
 details_data = []
 for i, category in enumerate(categories):
     if i < len(data_matrix):
         cash_flows = data_matrix[i]
         npv = calculate_npv(cash_flows, discount_rate)
-        
         impact_pct = (npv/manned_total)*100 if manned_total != 0 else 0
-        
-        details_data.append({
-            'Categoría': category,
-            'VPN (USD)': f"${npv:,.0f}",
-            'VPN (M USD)': f"${npv/1000000:.2f}M" if abs(npv) >= 1000000 else f"${npv/1000:.0f}K",
-            'Impacto (%)': f"{impact_pct:.2f}%"
-        })
+        details_data.append({'Categoría': category, 'VPN (USD)': f"${npv:,.0f}", 'VPN (M USD)': f"${npv/1000000:.2f}M" if abs(npv) >= 1000000 else f"${npv/1000:.0f}K", 'Impacto (%)': f"{impact_pct:.2f}%"})
 
 if details_data:
     df_details = pd.DataFrame(details_data)
@@ -292,14 +268,12 @@ else:
 st.markdown("---")
 st.markdown("### 📊 Información del Dataset")
 col1, col2 = st.columns(2)
-
 with col1:
     st.info(f"**Categorías:** {len(categories)}")
-    st.info(f"**Período de análisis:** {len(years)} años")
-    
+    st.info(f"**Período de análisis:** {len(years)} períodos")
 with col2:
     if len(years) > 0:
-        st.info(f"**Años:** {min(years)} - {max(years)}")
+        st.info(f"**Períodos:** {years[0]} - {years[-1]}")
     st.info(f"**Tasa de descuento actual:** {discount_rate}%")
 
 # Footer
