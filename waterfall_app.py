@@ -157,12 +157,12 @@ def prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros=T
     ordered_npvs = [it['npv'] for it in ordered]
     return ordered_categories, ordered_npvs
 
-# Crear gráfico waterfall con alineación estricta de vectores
+# Crear gráfico waterfall usando solo increasing/decreasing/totals (compatibilidad Plotly)
 
 def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros=True):
     ordered_categories, ordered_npvs = prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros)
 
-    # Construir vectores exactamente alineados
+    # Construir vectores alineados
     x_labels = ['MANNED (Base)'] + ordered_categories + ['ADS (Final)']
     measures = ['absolute'] + ['relative'] * len(ordered_categories) + ['total']
 
@@ -170,19 +170,6 @@ def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, dis
     relatives_sum = sum(ordered_npvs)
     final_adjustment = ads_total - (manned_total + relatives_sum)
     values = [manned_total] + ordered_npvs + [final_adjustment]
-
-    # Colores por barra del mismo largo que measures/x/y
-    bar_colors = []
-    rel_idx = 0
-    for m in measures:
-        if m == 'absolute':
-            bar_colors.append('#4682B4')  # azul
-        elif m == 'relative':
-            v = ordered_npvs[rel_idx]
-            bar_colors.append('#2E8B57' if v < 0 else '#DC143C')  # negativo=verde, positivo=rojo
-            rel_idx += 1
-        else:  # total
-            bar_colors.append('#4682B4')
 
     fig = go.Figure()
     fig.add_trace(go.Waterfall(
@@ -194,7 +181,9 @@ def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, dis
         text=[f"{val:.2f} MUSD" for val in values],
         textposition='outside',
         connector={"line": {"color": "rgb(63, 63, 63)"}},
-        marker={"color": bar_colors}
+        increasing={"marker": {"color": "#DC143C"}},  # positivo = rojo
+        decreasing={"marker": {"color": "#2E8B57"}},  # negativo = verde
+        totals={"marker": {"color": "#4682B4"}}
     ))
 
     fig.update_layout(
