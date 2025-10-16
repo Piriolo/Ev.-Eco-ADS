@@ -157,7 +157,7 @@ def prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros=T
     ordered_npvs = [it['npv'] for it in ordered]
     return ordered_categories, ordered_npvs
 
-# Crear gráfico waterfall con orden y filtrado (colores corregidos)
+# Crear gráfico waterfall con colores personalizados por barra
 
 def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros=True):
     ordered_categories, ordered_npvs = prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros)
@@ -171,8 +171,12 @@ def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, dis
     values.append(final_adjustment)
     measures = ["absolute"] + ["relative"] * len(ordered_categories) + ["total"]
 
-    # Colorear negativos en rojo y positivos en verde de forma explícita
-    # Plotly usa increasing para valores positivos y decreasing para negativos
+    # Forzar colores por barra: NEGATIVOS = VERDE, POSITIVOS = ROJO, Totales = AZUL
+    bar_colors = [None]  # para la barra inicial (absolute), el color lo maneja totals
+    for v in ordered_npvs:
+        bar_colors.append('#2E8B57' if v < 0 else '#DC143C')  # negativo=verde, positivo=rojo
+    bar_colors.append('#4682B4')  # total final
+
     fig = go.Figure()
     fig.add_trace(go.Waterfall(
         name="Análisis Waterfall",
@@ -183,8 +187,8 @@ def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, dis
         text=[f"{val:.2f} MUSD" for val in values],
         textposition="outside",
         connector={"line": {"color": "rgb(63, 63, 63)"}},
-        increasing={"marker": {"color": "#2E8B57"}},   # VERDE para positivos
-        decreasing={"marker": {"color": "#DC143C"}},   # ROJO para negativos
+        # Ignoramos increasing/decreasing y usamos marker.color por barra
+        marker={"color": bar_colors},
         totals={"marker": {"color": "#4682B4"}}
     ))
 
