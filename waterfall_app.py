@@ -43,8 +43,9 @@ hide_zeros = st.sidebar.checkbox(
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Instrucciones:**")
 st.sidebar.markdown("1. Carga tu archivo Excel")
-st.sidebar.markdown("2. Ajusta tasa, filtros y eje Y")
-st.sidebar.markdown("3. El gráfico se actualiza automáticamente")
+st.sidebar.markdown("2. Selecciona la hoja a usar (si tiene varias)")
+st.sidebar.markdown("3. Ajusta tasa, filtros y eje Y")
+st.sidebar.markdown("4. El gráfico se actualiza automáticamente")
 
 # Persistencia de sesión
 if 'rename_map' not in st.session_state:
@@ -53,6 +54,8 @@ if 'last_file_name' not in st.session_state:
     st.session_state.last_file_name = None
 if 'y_limits' not in st.session_state:
     st.session_state.y_limits = {'min': None, 'max': None}
+if 'sheet_name' not in st.session_state:
+    st.session_state.sheet_name = None
 
 # Upload de archivo Excel
 st.markdown("### 📁 Cargar Archivo Excel")
@@ -75,12 +78,21 @@ def parse_year_label(val, base_label_prefix="Y"):
         return f"{base_label_prefix}{n:02d}"
     return s
 
-# Función para cargar datos del Excel (unidades en MUSD)
+# Función para listar hojas del Excel
 @st.cache_data
-def load_excel_data(uploaded_file_bytes):
+def list_excel_sheets(file_bytes):
+    try:
+        xl = pd.ExcelFile(BytesIO(file_bytes), engine='openpyxl')
+        return xl.sheet_names
+    except Exception:
+        return []
+
+# Función para cargar datos del Excel (unidades en MUSD) desde una hoja específica
+@st.cache_data
+def load_excel_data(uploaded_file_bytes, sheet_name):
     try:
         if uploaded_file_bytes is not None:
-            df = pd.read_excel(BytesIO(uploaded_file_bytes), engine='openpyxl', header=None, na_values=['', ' ', 'NaN', 'NULL'])
+            df = pd.read_excel(BytesIO(uploaded_file_bytes), engine='openpyxl', header=None, na_values=['', ' ', 'NaN', 'NULL'], sheet_name=sheet_name)
             # Categorías (B145:B163)
             categories = []
             for i in range(144, 163):
@@ -116,14 +128,14 @@ def load_excel_data(uploaded_file_bytes):
             manned_total = float(df.iloc[168, 2]) if 168 < len(df) and 2 < len(df.columns) and pd.notna(df.iloc[168, 2]) else 0.0
             ads_total = float(df.iloc[171, 2]) if 171 < len(df) and 2 < len(df.columns) and pd.notna(df.iloc[171, 2]) else 0.0
             if len(categories) > 0 and len(years) > 0 and len(data_matrix) > 0:
-                st.success(f"✅ Datos cargados del Excel: {len(categories)} categorías, {len(years)} períodos (MUSD)")
+                st.success(f"✅ Datos cargados (hoja: {sheet_name}): {len(categories)} categorías, {len(years)} períodos (MUSD)")
                 st.info(f"📊 Totales (MUSD): MANNED={manned_total:,.2f}, ADS={ads_total:,.2f}")
                 return categories, years, np.array(data_matrix), manned_total, ads_total
             else:
-                st.warning("⚠️ No se encontraron datos válidos en las celdas especificadas")
+                st.warning("⚠️ No se encontraron datos válidos en las celdas especificadas en esta hoja")
                 st.info(f"Debug: {len(categories)} categorías, {len(years)} períodos, {len(data_matrix)} filas de datos")
     except Exception as e:
-        st.error(f"❌ Error al cargar el archivo Excel: {str(e)}")
+        st.error(f"❌ Error al cargar el archivo Excel/hoja: {str(e)}")
         st.info("Usando datos de ejemplo mientras tanto...")
     # Datos de ejemplo
     categories = ['Operación', 'Mantenimiento', 'Combustible', 'Neumáticos', 'Personal', 'Seguros', 'Depreciación', 'Costos Indirectos', 'Productividad', 'Eficiencia', 'Disponibilidad', 'Utilización', 'Calidad', 'Seguridad', 'Medio Ambiente', 'Capacitación', 'Repuestos', 'Servicios Externos', 'Otros']
@@ -136,14 +148,28 @@ def load_excel_data(uploaded_file_bytes):
 
 # Preparar datos para cargar y persistir
 uploaded_bytes = None
+sheet_selected = None
 if uploaded_file is not None:
     uploaded_bytes = uploaded_file.read()
+    # Si cambia el archivo, limpiar cache y resetear hoja
     if st.session_state.last_file_name != uploaded_file.name:
         st.cache_data.clear()
         st.session_state.last_file_name = uploaded_file.name
+        st.session_state.sheet_name = None
 
-# Cargar datos
-categories, years, data_matrix, manned_total, ads_total = load_excel_data(uploaded_bytes)
+    # Listar hojas del archivo subido
+    sheets = list_excel_sheets(uploaded_bytes)
+    if sheets:
+        st.sidebar.subheader("Hoja a utilizar")
+        default_idx = 0
+        if st.session_state.sheet_name in sheets:
+            default_idx = sheets.index(st.session_state.sheet_name)
+        sheet_selected = st.sidebar.selectbox("Selecciona hoja", options=sheets, index=default_idx)
+        st.session_state.sheet_name = sheet_selected
+
+# Cargar datos (usar hoja seleccionada o la primera)
+sheet_name_to_use = st.session_state.sheet_name
+categories, years, data_matrix, manned_total, ads_total = load_excel_data(uploaded_bytes, sheet_name_to_use)
 
 # Inicializar rename_map con categorías si está vacío
 for cat in categories:
@@ -181,13 +207,11 @@ def prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros=T
 def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros=True, rename_map=None, y_min=None, y_max=None):
     ordered_labels, ordered_npvs, ordered_keys = prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros, rename_map)
 
-    # Construir vectores alineados
     x_labels = ['MANNED'] + ordered_labels + ['ADS']
     measures = ['absolute'] + ['relative'] * len(ordered_labels) + ['total']
 
     relatives_sum = sum(ordered_npvs)
-    final_adjustment = manned_total + relatives_sum  # La barra total representa el ajuste neto respecto a la base
-    values = [manned_total] + ordered_npvs + [final_adjustment]
+    values = [manned_total] + ordered_npvs + [relatives_sum]
 
     fig = go.Figure()
     fig.add_trace(go.Waterfall(
@@ -261,6 +285,12 @@ st.markdown('---')
 fig, ordered_labels, ordered_npvs, ads_calc = create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros, rename_map, y_min, y_max)
 st.plotly_chart(fig, use_container_width=True)
 
+# Métrica de ADS calculado (MANNED + suma de barras)
+colA, colB = st.columns(2)
+with colA:
+    st.metric(label='ADS calc (MUSD)', value=f"{ads_calc:,.2f}")
+with colB:
+    st.caption('ADS calc = MANNED + suma de barras (verdes/rojas)')
 
 # Tabla de detalles
 st.markdown('### 📋 Detalles por Categoría (Ordenado y Filtrado)')
@@ -286,6 +316,7 @@ with col1:
 with col2:
     if len(years) > 0:
         st.info(f"**Períodos:** {years[0]} - {years[-1]}")
+    st.info(f"**Hoja seleccionada:** {sheet_name_to_use if sheet_name_to_use else 'Primera disponible'}")
     st.info(f"**Ocultar impactos cero:** {'Sí' if hide_zeros else 'No'}")
     st.info(f"**Tasa de descuento actual:** {discount_rate}%")
 
