@@ -18,6 +18,7 @@ st.markdown("### Gráfico Waterfall Interactivo")
 
 # Sidebar para controles
 st.sidebar.header("Controles")
+
 discount_rate = st.sidebar.slider(
     "Tasa de Descuento (%)",
     min_value=0.0,
@@ -26,6 +27,11 @@ discount_rate = st.sidebar.slider(
     step=0.1,
     help="Ajusta la tasa de descuento para el análisis del VPN"
 )
+
+# Ajustes de eje Y
+st.sidebar.subheader("Eje Y (MUSD)")
+y_min = st.sidebar.number_input("Mínimo", value=None, placeholder="auto")
+y_max = st.sidebar.number_input("Máximo", value=None, placeholder="auto")
 
 # Toggle para ocultar/mostrar impactos cero
 hide_zeros = st.sidebar.checkbox(
@@ -37,16 +43,23 @@ hide_zeros = st.sidebar.checkbox(
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Instrucciones:**")
 st.sidebar.markdown("1. Carga tu archivo Excel")
-st.sidebar.markdown("2. Ajusta la tasa de descuento")
+st.sidebar.markdown("2. Ajusta tasa, filtros y eje Y")
 st.sidebar.markdown("3. El gráfico se actualiza automáticamente")
-st.sidebar.markdown("4. Hover sobre las barras para más detalles")
+
+# Persistencia de sesión
+if 'rename_map' not in st.session_state:
+    st.session_state.rename_map = {}
+if 'last_file_name' not in st.session_state:
+    st.session_state.last_file_name = None
+if 'y_limits' not in st.session_state:
+    st.session_state.y_limits = {'min': None, 'max': None}
 
 # Upload de archivo Excel
 st.markdown("### 📁 Cargar Archivo Excel")
 uploaded_file = st.file_uploader(
     "Selecciona el archivo 'Ev. Eco ADS.xlsx'",
     type=['xlsx'],
-    help="Carga tu archivo Excel para usar datos reales en lugar de los datos de ejemplo"
+    help="Carga tu archivo Excel para usar datos reales"
 )
 
 # Utilidad para parsear etiquetas de período tipo "Y01", "Año 02", "Y1", etc.
@@ -112,7 +125,7 @@ def load_excel_data(uploaded_file_bytes):
     except Exception as e:
         st.error(f"❌ Error al cargar el archivo Excel: {str(e)}")
         st.info("Usando datos de ejemplo mientras tanto...")
-    # Datos de ejemplo en MUSD
+    # Datos de ejemplo
     categories = ['Operación', 'Mantenimiento', 'Combustible', 'Neumáticos', 'Personal', 'Seguros', 'Depreciación', 'Costos Indirectos', 'Productividad', 'Eficiencia', 'Disponibilidad', 'Utilización', 'Calidad', 'Seguridad', 'Medio Ambiente', 'Capacitación', 'Repuestos', 'Servicios Externos', 'Otros']
     years = [f"Y{n:02d}" for n in range(1, 21)]
     np.random.seed(42)
@@ -121,16 +134,20 @@ def load_excel_data(uploaded_file_bytes):
     ads_total = 8.5
     return categories, years, data_matrix, manned_total, ads_total
 
-# Preparar datos para cargar
+# Preparar datos para cargar y persistir
 uploaded_bytes = None
 if uploaded_file is not None:
     uploaded_bytes = uploaded_file.read()
-    if 'last_file_name' not in st.session_state or st.session_state.last_file_name != uploaded_file.name:
+    if st.session_state.last_file_name != uploaded_file.name:
         st.cache_data.clear()
         st.session_state.last_file_name = uploaded_file.name
 
 # Cargar datos
 categories, years, data_matrix, manned_total, ads_total = load_excel_data(uploaded_bytes)
+
+# Inicializar rename_map con categorías si está vacío
+for cat in categories:
+    st.session_state.rename_map.setdefault(cat, cat)
 
 # VPN
 
@@ -140,7 +157,7 @@ def calculate_npv(cash_flows, discount_rate):
         npv += cash_flow / ((1 + discount_rate/100) ** i)
     return npv
 
-# Preparación de datos: ordenar y filtrar según reglas del usuario
+# Preparación de datos
 
 def prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros=True, rename_map=None):
     items = []
@@ -159,19 +176,17 @@ def prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros=T
     ordered_keys = [it['cat'] for it in ordered]
     return ordered_labels, ordered_npvs, ordered_keys
 
-# Crear gráfico waterfall usando solo increasing/decreasing/totals (compatibilidad Plotly)
+# Gráfico Waterfall
 
-def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros=True, rename_map=None):
+def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros=True, rename_map=None, y_min=None, y_max=None):
     ordered_labels, ordered_npvs, ordered_keys = prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros, rename_map)
 
-    # Construir vectores alineados
     x_labels = ['MANNED (Base)'] + ordered_labels + ['ADS (Final)']
     measures = ['absolute'] + ['relative'] * len(ordered_labels) + ['total']
 
-    # ADS forzado = MANNED + suma de relativos
     relatives_sum = sum(ordered_npvs)
-    final_adjustment = relatives_sum  # La barra total representa el ajuste neto respecto a la base
-    values = [manned_total] + ordered_npvs + [final_adjustment]
+    # La barra total representa cambio neto respecto a MANNED
+    values = [manned_total] + ordered_npvs + [relatives_sum]
 
     fig = go.Figure()
     fig.add_trace(go.Waterfall(
@@ -198,11 +213,17 @@ def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, dis
     )
     fig.update_xaxes(tickangle=45)
     fig.update_yaxes(tickformat=',.2f')
-    # ADS calculado visualmente para mostrar métrica fuera
+
+    # Limites de eje Y si se definieron
+    y0 = st.session_state.y_limits.get('min') if y_min is None else y_min
+    y1 = st.session_state.y_limits.get('max') if y_max is None else y_max
+    if y0 is not None or y1 is not None:
+        fig.update_yaxes(range=[y0 if y0 is not None else None, y1 if y1 is not None else None])
+
     ads_calc = manned_total + relatives_sum
     return fig, ordered_labels, ordered_npvs, ads_calc
 
-# Bloque de métricas superior
+# Métricas superiores
 st.markdown('---')
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -214,27 +235,39 @@ with col2:
 with col3:
     st.metric(label='Total ADS (MUSD)', value=f"{ads_total:,.2f}")
 
-# Renombrado de categorías (antes de construir gráfico)
+# Selector y edición de categorías (UI compacta)
 st.markdown('---')
 st.markdown('### ✏️ Renombrar categorías')
-rename_map = {}
-for cat in categories:
-    new_name = st.text_input(f"Nombre para '{cat}'", value=cat, key=f"rename_{cat}")
-    rename_map[cat] = new_name if new_name.strip() else cat
+col_sel, col_edit = st.columns([1,2])
+with col_sel:
+    selected_cat = st.selectbox('Selecciona categoría', options=categories, index=0)
+with col_edit:
+    new_label = st.text_input('Nuevo nombre', value=st.session_state.rename_map.get(selected_cat, selected_cat))
+    if st.button('Guardar nombre'):
+        st.session_state.rename_map[selected_cat] = new_label.strip() or selected_cat
+        st.success(f"Nombre actualizado: {selected_cat} → {st.session_state.rename_map[selected_cat]}")
+
+rename_map = st.session_state.rename_map
+
+# Persistir límites de eje Y
+if y_min is not None:
+    st.session_state.y_limits['min'] = y_min
+if y_max is not None:
+    st.session_state.y_limits['max'] = y_max
 
 # Gráfico
 st.markdown('---')
-fig, ordered_labels, ordered_npvs, ads_calc = create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros, rename_map)
+fig, ordered_labels, ordered_npvs, ads_calc = create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros, rename_map, y_min, y_max)
 st.plotly_chart(fig, use_container_width=True)
 
-# Métrica de ADS calculado (MANNED + suma de barras) y verificación
+# Métrica de ADS calculado (MANNED + suma de barras)
 colA, colB = st.columns(2)
 with colA:
     st.metric(label='ADS calc (MUSD)', value=f"{ads_calc:,.2f}")
 with colB:
     st.caption('ADS calc = MANNED + suma de barras (verdes/rojas)')
 
-# Tabla de detalles (ordenada, filtrada y con renombres)
+# Tabla de detalles
 st.markdown('### 📋 Detalles por Categoría (Ordenado y Filtrado)')
 
 details_data = []
