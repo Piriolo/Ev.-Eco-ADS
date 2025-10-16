@@ -142,36 +142,35 @@ def calculate_npv(cash_flows, discount_rate):
 
 # Preparación de datos: ordenar y filtrar según reglas del usuario
 
-def prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros=True):
+def prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros=True, rename_map=None):
     items = []
     for i, cat in enumerate(categories):
         if i < len(data_matrix):
             npv = calculate_npv(data_matrix[i], discount_rate)
-            items.append({'cat': cat, 'npv': npv})
+            display_cat = rename_map.get(cat, cat) if rename_map else cat
+            items.append({'cat': cat, 'label': display_cat, 'npv': npv})
     if hide_zeros:
         items = [it for it in items if abs(it['npv']) > 1e-9]
     negatives = sorted([it for it in items if it['npv'] < 0], key=lambda x: x['npv'])
     positives = sorted([it for it in items if it['npv'] > 0], key=lambda x: x['npv'], reverse=True)
     ordered = negatives + positives
-    ordered_categories = [it['cat'] for it in ordered]
+    ordered_labels = [it['label'] for it in ordered]
     ordered_npvs = [it['npv'] for it in ordered]
-    return ordered_categories, ordered_npvs
+    ordered_keys = [it['cat'] for it in ordered]
+    return ordered_labels, ordered_npvs, ordered_keys
 
 # Crear gráfico waterfall usando solo increasing/decreasing/totals (compatibilidad Plotly)
 
-def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros=True):
-    ordered_categories, ordered_npvs = prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros)
+def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros=True, rename_map=None):
+    ordered_labels, ordered_npvs, ordered_keys = prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros, rename_map)
 
     # Construir vectores alineados
-    x_labels = ['MANNED (Base)'] + ordered_categories + ['ADS (Final)']
-    measures = ['absolute'] + ['relative'] * len(ordered_categories) + ['total']
+    x_labels = ['MANNED (Base)'] + ordered_labels + ['ADS (Final)']
+    measures = ['absolute'] + ['relative'] * len(ordered_labels) + ['total']
 
-    # Valores: absoluto, relativos, total (ADS calculado como MANNED + suma de barras)
+    # ADS forzado = MANNED + suma de relativos
     relatives_sum = sum(ordered_npvs)
-    final_adjustment = ads_total if ads_total != 0 else (manned_total + relatives_sum)
-    if ads_total != 0:
-        # Asegurar consistencia visual: la barra total refleje MANNED + sum(relatives)
-        final_adjustment = (manned_total + relatives_sum) - manned_total
+    final_adjustment = relatives_sum  # La barra total representa el ajuste neto respecto a la base
     values = [manned_total] + ordered_npvs + [final_adjustment]
 
     fig = go.Figure()
@@ -199,54 +198,49 @@ def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, dis
     )
     fig.update_xaxes(tickangle=45)
     fig.update_yaxes(tickformat=',.2f')
-    return fig, ordered_categories, ordered_npvs, relatives_sum
+    # ADS calculado visualmente para mostrar métrica fuera
+    ads_calc = manned_total + relatives_sum
+    return fig, ordered_labels, ordered_npvs, ads_calc
 
-# Mostrar métricas y gráfico
+# Bloque de métricas superior
 st.markdown('---')
 col1, col2, col3 = st.columns(3)
 with col1:
     st.metric(label='Total MANNED (MUSD)', value=f"{manned_total:,.2f}")
-
-# Delta con color invertido: verde si delta < 0 (mejora), rojo si delta > 0
 with col2:
-    difference = ads_total - manned_total
+    difference = (ads_total - manned_total)
     delta_pct = (difference/manned_total)*100 if manned_total != 0 else 0
-    delta_str = f"{delta_pct:.1f}%"
-    st.metric(label='Diferencia (MUSD)', value=f"{difference:,.2f}", delta=delta_str, delta_color='inverse')
-
+    st.metric(label='Diferencia (MUSD)', value=f"{difference:,.2f}", delta=f"{delta_pct:.1f}%", delta_color='inverse')
 with col3:
-    # Mostrar ADS calculado como MANNED + suma de relativos
-    # Se recalcula luego de crear el gráfico para consistencia
-    pass
+    st.metric(label='Total ADS (MUSD)', value=f"{ads_total:,.2f}")
 
-st.markdown('---')
-fig, ordered_categories, ordered_npvs, relatives_sum = create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros)
-st.plotly_chart(fig, use_container_width=True)
-
-# Métrica de ADS calculado (MANNED + suma de barras)
-calculated_ads = manned_total + relatives_sum
-colA, colB = st.columns(2)
-with colA:
-    st.metric(label='ADS calc (MUSD)', value=f"{calculated_ads:,.2f}")
-with colB:
-    st.caption('ADS calculado = MANNED + suma de barras (verdes/rojas)')
-
-# Editor de categorías: permitir renombrar
+# Renombrado de categorías (antes de construir gráfico)
 st.markdown('---')
 st.markdown('### ✏️ Renombrar categorías')
-renamed = {}
-for cat in ordered_categories:
+rename_map = {}
+for cat in categories:
     new_name = st.text_input(f"Nombre para '{cat}'", value=cat, key=f"rename_{cat}")
-    renamed[cat] = new_name if new_name.strip() else cat
+    rename_map[cat] = new_name if new_name.strip() else cat
 
-# Aplicar renombres a la tabla de detalles
+# Gráfico
+st.markdown('---')
+fig, ordered_labels, ordered_npvs, ads_calc = create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros, rename_map)
+st.plotly_chart(fig, use_container_width=True)
+
+# Métrica de ADS calculado (MANNED + suma de barras) y verificación
+colA, colB = st.columns(2)
+with colA:
+    st.metric(label='ADS calc (MUSD)', value=f"{ads_calc:,.2f}")
+with colB:
+    st.caption('ADS calc = MANNED + suma de barras (verdes/rojas)')
+
+# Tabla de detalles (ordenada, filtrada y con renombres)
 st.markdown('### 📋 Detalles por Categoría (Ordenado y Filtrado)')
 
 details_data = []
-for cat, npv in zip(ordered_categories, ordered_npvs):
-    display_cat = renamed.get(cat, cat)
+for label, npv in zip(ordered_labels, ordered_npvs):
     impact_pct = (npv/manned_total)*100 if manned_total != 0 else 0
-    details_data.append({'Categoría': display_cat, 'VPN (MUSD)': f"{npv:,.2f}", 'Impacto (%)': f"{impact_pct:.2f}%"})
+    details_data.append({'Categoría': label, 'VPN (MUSD)': f"{npv:,.2f}", 'Impacto (%)': f"{impact_pct:.2f}%"})
 
 if details_data:
     df_details = pd.DataFrame(details_data)
