@@ -147,22 +147,17 @@ def prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros=T
     for i, cat in enumerate(categories):
         if i < len(data_matrix):
             npv = calculate_npv(data_matrix[i], discount_rate)
-            items.append({
-                'cat': cat,
-                'npv': npv
-            })
-    # Ocultar/filtrar impactos cero
+            items.append({'cat': cat, 'npv': npv})
     if hide_zeros:
         items = [it for it in items if abs(it['npv']) > 1e-12]
-    # Orden: primero negativos (costos, rojo) de mayor a menor (más negativo a menos negativo), luego positivos (verde) de mayor a menor
-    negatives = sorted([it for it in items if it['npv'] < 0], key=lambda x: x['npv'])  # más negativo primero
-    positives = sorted([it for it in items if it['npv'] > 0], key=lambda x: x['npv'], reverse=True)  # mayor primero
+    negatives = sorted([it for it in items if it['npv'] < 0], key=lambda x: x['npv'])
+    positives = sorted([it for it in items if it['npv'] > 0], key=lambda x: x['npv'], reverse=True)
     ordered = negatives + positives
     ordered_categories = [it['cat'] for it in ordered]
     ordered_npvs = [it['npv'] for it in ordered]
     return ordered_categories, ordered_npvs
 
-# Crear gráfico waterfall con orden y filtrado
+# Crear gráfico waterfall con orden y filtrado (colores corregidos)
 
 def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros=True):
     ordered_categories, ordered_npvs = prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros)
@@ -175,8 +170,9 @@ def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, dis
     final_adjustment = ads_total - cumulative
     values.append(final_adjustment)
     measures = ["absolute"] + ["relative"] * len(ordered_categories) + ["total"]
-    # Colores: rojos para negativos, verdes para positivos, total azul
-    marker_colors = (["#2E8B57" if v > 0 else "#DC143C" for v in values[1:-1]])
+
+    # Colorear negativos en rojo y positivos en verde de forma explícita
+    # Plotly usa increasing para valores positivos y decreasing para negativos
     fig = go.Figure()
     fig.add_trace(go.Waterfall(
         name="Análisis Waterfall",
@@ -187,10 +183,11 @@ def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, dis
         text=[f"{val:.2f} MUSD" for val in values],
         textposition="outside",
         connector={"line": {"color": "rgb(63, 63, 63)"}},
-        increasing={"marker": {"color": "#2E8B57"}},
-        decreasing={"marker": {"color": "#DC143C"}},
+        increasing={"marker": {"color": "#2E8B57"}},   # VERDE para positivos
+        decreasing={"marker": {"color": "#DC143C"}},   # ROJO para negativos
         totals={"marker": {"color": "#4682B4"}}
     ))
+
     fig.update_layout(
         title={'text': f"Análisis Waterfall: MANNED vs ADS (Tasa: {discount_rate}%)", 'x': 0.5, 'xanchor': 'center', 'font': {'size': 16}},
         xaxis_title="Categorías (Costos negativos primero, luego positivos)",
@@ -225,11 +222,7 @@ st.markdown("### 📋 Detalles por Categoría (Ordenado y Filtrado)")
 details_data = []
 for cat, npv in zip(ordered_categories, ordered_npvs):
     impact_pct = (npv/manned_total)*100 if manned_total != 0 else 0
-    details_data.append({
-        'Categoría': cat,
-        'VPN (MUSD)': f"{npv:,.2f}",
-        'Impacto (%)': f"{impact_pct:.2f}%"
-    })
+    details_data.append({'Categoría': cat, 'VPN (MUSD)': f"{npv:,.2f}", 'Impacto (%)': f"{impact_pct:.2f}%"})
 
 if details_data:
     df_details = pd.DataFrame(details_data)
