@@ -149,7 +149,7 @@ def prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros=T
             npv = calculate_npv(data_matrix[i], discount_rate)
             items.append({'cat': cat, 'npv': npv})
     if hide_zeros:
-        items = [it for it in items if abs(it['npv']) > 1e-12]
+        items = [it for it in items if abs(it['npv']) > 1e-9]
     negatives = sorted([it for it in items if it['npv'] < 0], key=lambda x: x['npv'])
     positives = sorted([it for it in items if it['npv'] > 0], key=lambda x: x['npv'], reverse=True)
     ordered = negatives + positives
@@ -157,71 +157,76 @@ def prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros=T
     ordered_npvs = [it['npv'] for it in ordered]
     return ordered_categories, ordered_npvs
 
-# Crear gráfico waterfall con colores personalizados por barra
+# Crear gráfico waterfall con alineación estricta de vectores
 
 def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros=True):
     ordered_categories, ordered_npvs = prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros)
-    x_labels = ['MANNED (Base)'] + ordered_categories + ['ADS (Final)']
-    values = [manned_total]
-    cumulative = manned_total
-    for val in ordered_npvs:
-        values.append(val)
-        cumulative += val
-    final_adjustment = ads_total - cumulative
-    values.append(final_adjustment)
-    measures = ["absolute"] + ["relative"] * len(ordered_categories) + ["total"]
 
-    # Forzar colores por barra: NEGATIVOS = VERDE, POSITIVOS = ROJO, Totales = AZUL
-    bar_colors = [None]  # para la barra inicial (absolute), el color lo maneja totals
-    for v in ordered_npvs:
-        bar_colors.append('#2E8B57' if v < 0 else '#DC143C')  # negativo=verde, positivo=rojo
-    bar_colors.append('#4682B4')  # total final
+    # Construir vectores exactamente alineados
+    x_labels = ['MANNED (Base)'] + ordered_categories + ['ADS (Final)']
+    measures = ['absolute'] + ['relative'] * len(ordered_categories) + ['total']
+
+    # Valores: absoluto, relativos, total
+    relatives_sum = sum(ordered_npvs)
+    final_adjustment = ads_total - (manned_total + relatives_sum)
+    values = [manned_total] + ordered_npvs + [final_adjustment]
+
+    # Colores por barra del mismo largo que measures/x/y
+    bar_colors = []
+    rel_idx = 0
+    for m in measures:
+        if m == 'absolute':
+            bar_colors.append('#4682B4')  # azul
+        elif m == 'relative':
+            v = ordered_npvs[rel_idx]
+            bar_colors.append('#2E8B57' if v < 0 else '#DC143C')  # negativo=verde, positivo=rojo
+            rel_idx += 1
+        else:  # total
+            bar_colors.append('#4682B4')
 
     fig = go.Figure()
     fig.add_trace(go.Waterfall(
-        name="Análisis Waterfall",
-        orientation="v",
+        name='Análisis Waterfall',
+        orientation='v',
         measure=measures,
         x=x_labels,
         y=values,
         text=[f"{val:.2f} MUSD" for val in values],
-        textposition="outside",
+        textposition='outside',
         connector={"line": {"color": "rgb(63, 63, 63)"}},
-        # Ignoramos increasing/decreasing y usamos marker.color por barra
-        marker={"color": bar_colors},
-        totals={"marker": {"color": "#4682B4"}}
+        marker={"color": bar_colors}
     ))
 
     fig.update_layout(
         title={'text': f"Análisis Waterfall: MANNED vs ADS (Tasa: {discount_rate}%)", 'x': 0.5, 'xanchor': 'center', 'font': {'size': 16}},
-        xaxis_title="Categorías (Costos negativos primero, luego positivos)",
-        yaxis_title="VPN (MUSD)",
+        xaxis_title='Categorías (Costos negativos primero, luego positivos)',
+        yaxis_title='VPN (MUSD)',
         showlegend=False,
         height=600,
         hovermode='x unified'
     )
     fig.update_xaxes(tickangle=45)
-    fig.update_yaxes(tickformat=",.2f")
+    fig.update_yaxes(tickformat=',.2f')
     return fig, ordered_categories, ordered_npvs
 
 # Mostrar métricas y gráfico
-st.markdown("---")
+st.markdown('---')
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric(label="Total MANNED (MUSD)", value=f"{manned_total:,.2f}")
+    st.metric(label='Total MANNED (MUSD)', value=f"{manned_total:,.2f}")
 with col2:
-    st.metric(label="Total ADS (MUSD)", value=f"{ads_total:,.2f}")
+    st.metric(label='Total ADS (MUSD)', value=f"{ads_total:,.2f}")
 with col3:
     difference = ads_total - manned_total
     delta_pct = (difference/manned_total)*100 if manned_total != 0 else 0
-    st.metric(label="Diferencia (MUSD)", value=f"{difference:,.2f}", delta=f"{delta_pct:.1f}%")
+    st.metric(label='Diferencia (MUSD)', value=f"{difference:,.2f}", delta=f"{delta_pct:.1f}%")
 
-st.markdown("---")
+st.markdown('---')
 fig, ordered_categories, ordered_npvs = create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros)
 st.plotly_chart(fig, use_container_width=True)
 
 # Tabla de detalles (ordenada y filtrada)
-st.markdown("### 📋 Detalles por Categoría (Ordenado y Filtrado)")
+st.markdown('### 📋 Detalles por Categoría (Ordenado y Filtrado)')
 
 details_data = []
 for cat, npv in zip(ordered_categories, ordered_npvs):
@@ -232,11 +237,11 @@ if details_data:
     df_details = pd.DataFrame(details_data)
     st.dataframe(df_details, use_container_width=True)
 else:
-    st.warning("No hay datos para mostrar en la tabla de detalles tras el filtrado")
+    st.warning('No hay datos para mostrar en la tabla de detalles tras el filtrado')
 
 # Información adicional
-st.markdown("---")
-st.markdown("### 📊 Información del Dataset")
+st.markdown('---')
+st.markdown('### 📊 Información del Dataset')
 col1, col2 = st.columns(2)
 with col1:
     st.info(f"**Categorías cargadas:** {len(categories)}")
@@ -248,5 +253,5 @@ with col2:
     st.info(f"**Tasa de descuento actual:** {discount_rate}%")
 
 # Footer
-st.markdown("---")
-st.markdown("*Desarrollado para análisis económico MANNED vs ADS con tasa de descuento variable (unidades en MUSD)*")
+st.markdown('---')
+st.markdown('*Desarrollado para análisis económico MANNED vs ADS con tasa de descuento variable (unidades en MUSD)*')
