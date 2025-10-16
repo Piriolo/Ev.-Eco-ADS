@@ -165,12 +165,12 @@ def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, dis
     ordered_labels, ordered_npvs, ordered_keys = prepare_sorted_filtered(categories, data_matrix, discount_rate, hide_zeros, rename_map)
 
     # Construir vectores alineados
-    x_labels = ['MANNED (Base)'] + ordered_labels + ['ADS (Final)']
+    x_labels = ['MANNED'] + ordered_labels + ['ADS']
     measures = ['absolute'] + ['relative'] * len(ordered_labels) + ['total']
 
     # ADS forzado = MANNED + suma de relativos
     relatives_sum = sum(ordered_npvs)
-    final_adjustment = relatives_sum  # La barra total representa el ajuste neto respecto a la base
+    final_adjustment = manned_total + relatives_sum  # La barra total representa el ajuste neto respecto a la base
     values = [manned_total] + ordered_npvs + [final_adjustment]
 
     fig = go.Figure()
@@ -190,7 +190,7 @@ def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, dis
 
     fig.update_layout(
         title={'text': f"Análisis Waterfall: MANNED vs ADS (Tasa: {discount_rate}%)", 'x': 0.5, 'xanchor': 'center', 'font': {'size': 16}},
-        xaxis_title='Categorías (Costos negativos primero, luego positivos)',
+        xaxis_title='Categorías',
         yaxis_title='VPN (MUSD)',
         showlegend=False,
         height=600,
@@ -208,11 +208,11 @@ col1, col2, col3 = st.columns(3)
 with col1:
     st.metric(label='Total MANNED (MUSD)', value=f"{manned_total:,.2f}")
 with col2:
+    st.metric(label='Total ADS (MUSD)', value=f"{ads_total:,.2f}")
+with col3:
     difference = (ads_total - manned_total)
     delta_pct = (difference/manned_total)*100 if manned_total != 0 else 0
     st.metric(label='Diferencia (MUSD)', value=f"{difference:,.2f}", delta=f"{delta_pct:.1f}%", delta_color='inverse')
-with col3:
-    st.metric(label='Total ADS (MUSD)', value=f"{ads_total:,.2f}")
 
 # Renombrado de categorías (antes de construir gráfico)
 st.markdown('---')
@@ -227,12 +227,6 @@ st.markdown('---')
 fig, ordered_labels, ordered_npvs, ads_calc = create_waterfall_chart(categories, data_matrix, manned_total, ads_total, discount_rate, hide_zeros, rename_map)
 st.plotly_chart(fig, use_container_width=True)
 
-# Métrica de ADS calculado (MANNED + suma de barras) y verificación
-colA, colB = st.columns(2)
-with colA:
-    st.metric(label='ADS calc (MUSD)', value=f"{ads_calc:,.2f}")
-with colB:
-    st.caption('ADS calc = MANNED + suma de barras (verdes/rojas)')
 
 # Tabla de detalles (ordenada, filtrada y con renombres)
 st.markdown('### 📋 Detalles por Categoría (Ordenado y Filtrado)')
