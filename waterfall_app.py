@@ -210,7 +210,7 @@ def create_waterfall_chart(categories, data_matrix, manned_total, ads_total, dis
     x_labels = ['MANNED'] + ordered_labels + ['ADS']
     measures = ['absolute'] + ['relative'] * len(ordered_labels) + ['total']
 
-    relatives_sum = sum(ordered_npvs)
+    relatives_sum = manned_total + sum(ordered_npvs)
     values = [manned_total] + ordered_npvs + [relatives_sum]
 
     fig = go.Figure()
